@@ -1,0 +1,8 @@
+{
+  "B2_type_trait_solver": -0.0014,
+  "B4_frontend_parse": -0.2372,
+  "B6_infra_tooling": 0.1254,
+  "B1_backend_codegen": 0.2137,
+  "B5_library_std": -0.0785,
+  "B3_query_incremental": -0.0801
+}

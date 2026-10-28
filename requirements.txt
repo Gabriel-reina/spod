@@ -1,0 +1,13 @@
+# Standalone SFT / RM / phi / evaluation dependencies.
+# Install the matching ROLL environment first when also running online GRPO.
+torch
+transformers>=4.51.0,<5
+dacite
+hydra-core
+omegaconf
+tensorboard
+
+# Online GRPO additionally requires the public ROLL checkout and its matching
+# Megatron / vLLM stack. Install those together using ROLL's pinned requirements;
+# an unpinned vLLM here could silently replace a working torch/CUDA environment.
+# See README.md and configs/roll_revision.txt.

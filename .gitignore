@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+
+# Training and evaluation outputs
+output/
+output_*/
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+*.swp
+
+# Local reproduction / release artifacts
+reproduction_outputs/
+dist/

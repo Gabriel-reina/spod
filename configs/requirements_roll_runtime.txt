@@ -1,0 +1,3 @@
+# Ray 2.48 CLI on Python 3.10 is incompatible with Click >=8.3 (Sentinel deepcopy).
+# https://alibaba.github.io/ROCK/docs/1.6.x/Getting%20Started/rockroll/
+click==8.2.1

@@ -1,0 +1,46 @@
+SPOD: Selective Popularity Debiasing for RLVR
+Copyright (c) 2026 The SPOD Authors
+
+This product includes software developed by The SPOD Authors and is
+licensed under the Apache License, Version 2.0 (see the LICENSE file).
+
+Third-party software and data
+-----------------------------
+
+This project depends on, and is designed to be used together with, the
+following third-party components. It does not redistribute their source
+code; they are referenced as external dependencies installed separately
+or downloaded at run time.
+
+1. ROLL framework (https://github.com/alibaba/ROLL)
+   Licensed under the Apache License, Version 2.0.
+   Files under roll_spod/ are designed to be added to a ROLL checkout,
+   and entry/start_rlvr_pipeline.py imports ROLL modules at run time.
+
+2. Qwen2.5-0.5B and Qwen3-1.7B-Base models
+   (https://huggingface.co/Qwen)
+   Licensed under the Apache License, Version 2.0.
+   Model weights are not included; the models are referenced by Hugging
+   Face Hub identifiers and downloaded at run time.
+
+3. NVIDIA Megatron-LM (https://github.com/NVIDIA/Megatron-LM)
+   Licensed under the Apache License, Version 2.0.
+   Used through ROLL as a distributed-training backend; its source code
+   is not included here.
+
+4. modded-nanogpt (https://github.com/KellerJordan/modded-nanogpt)
+   Licensed under the MIT License.
+   Copyright (c) 2024 Keller Jordan.
+   Data under data/ is derived from this project's public GitHub pull
+   requests, issues, speedrun records, and README. The full MIT license
+   text is reproduced in THIRD_PARTY_NOTICES.md.
+
+5. rustc-perf and rust-lang/rust
+   (https://github.com/rust-lang/rustc-perf and
+   https://github.com/rust-lang/rust)
+   Data under rustc_perf/data/ is derived from public rustc-perf weekly
+   triage reports and rust-lang/rust pull requests. Consult the upstream
+   repositories for the license terms governing their original content.
+
+Standard Python dependencies are governed by their respective upstream
+licenses. See requirements.txt for the direct runtime dependencies.

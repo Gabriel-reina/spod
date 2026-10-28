@@ -1,0 +1,185 @@
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+
+# spod_grpo (rustc-perf scenario): the GRPO config shared by all SPOD arms. All differences between
+# arms go through environment variables (see scripts/run_grpo.sh); this yaml stays byte-identical --
+# a single-variable comparison requires every byte to be the same except the SPOD switch.
+#   base: Qwen3-1.7B-Base (rustc scenario), both SFT/RM are self-trained.
+#   pretrain:        the self-trained SFT cold-start output (local HF dir ./output_spod_sft/sft_hf)
+#   reward_pretrain: the self-trained proxy RM output (local HF dir ./output_spod_rm/rm_hf)
+#   data: data/grpo_prompts_train.jsonl (1414 train-only online GRPO prompts, per-change / per-sample states, local file)
+#
+# WARNING: template must be spod_raw: SFT and RM are both plain-text concatenation prompt + "\n" + response;
+#   wrapping it with <|im_start|> would immediately drive the actor off the SFT distribution and push RM scoring out-of-distribution.
+#   see spod_raw in roll/datasets/chat_template.py.
+#
+# WARNING: the reward worker uses SpodRMRewardWorker (the SPOD injection point is inside it).
+exp_name: "spod-grpo"
+seed: 42
+logging_dir: ./output/logs
+output_dir: ./output
+
+checkpoint_config:
+  type: file_system
+  output_dir: ./output/ckpt
+
+track_with: tensorboard
+tracker_kwargs:
+  log_dir: ./output/tensorboard/spod/grpo
+
+# resource: gpu:100 => 1 worker = 1 GPU, 2 workers = 2 GPUs
+num_gpus_per_node: 1
+
+# Two-GPU recipe: avoid the framework's large-cluster default of 16 CPU storage actors.
+transfer_backend:
+  backend_name: TransferQueue
+  backend_config:
+    backend:
+      SimpleStorage:
+        num_data_storage_units: 2
+
+max_steps: 50
+# ckpt_id = checkpoint-{global_step}, only persisted when step%save_steps==0 or at max_steps-1.
+# Using 25 => you get two points, checkpoint-25 (mid-run) and checkpoint-49 (last step), so at eval time you can
+# see "whether debiasing gets stronger as training progresses" instead of only a single final point. The output is
+# a Megatron distributed ckpt and must go through spod_convert.sh to be merged into HF before evaluation.
+save_steps: 25
+logging_steps: 1
+eval_steps: 10000
+resume_from_checkpoint: false
+
+# grpo related
+rollout_batch_size: 16          # 16 prompt x k8 = 128 per step; 1414 prompts is about 88 steps/epoch
+adv_estimator: "grpo"
+num_return_sequences_in_group: 8
+
+# measured longest prompt 1042 chars (~300 tokens), measured longest response 1218 chars (~400 tokens)
+prompt_length: 512
+response_length: 512
+
+ppo_epochs: 1
+use_kl_loss: true
+# 2026-09 raised KL: 0.002 is too small; on 3B both GRPO and SPOD over-concentrate onto a single category (SPOD C3~=65%).
+#   Increasing the KL-in-loss coefficient pulls the policy toward the SFT distribution and suppresses over-concentration. GRPO(v) and SPOD(bhap) share this line,
+#   with no script-side override, so editing this one place guarantees the KL coefficients of both arms are strictly equal (a fairness requirement of the comparison).
+# 2026-09 rustc (Qwen3-1.7B): 0.01 is the overshoot setting for 3B; applied to 1.7B it pins the policy near SFT,
+#   GRPO barely collapses, SPOD has no bias to remove and cannot beat SFT; whereas the 1.7B nanoGPT dual-gain run used 0.002
+#   (GRPO only collapses to 30.8%, and after SPOD debiasing quality rises rather than drops). rustc's RM strongly favors the high-scoring class B6(z=+1.72),
+#   and the category prior is also skewed, so 0.002 risks collapsing too far into the bad region of "penalizing the inflated dominant class = losing quality", hence we take
+#   the middle value 0.005: it makes GRPO collapse clearly (giving SPOD a target) without collapsing so far that SPOD is harmed. Both arms share this line.
+kl_loss_coef: 0.005
+loss_agg_mode: "seq-mean-token-mean"
+
+# advantage
+whiten_advantages: true
+advantage_clip: 2.0
+dual_clip_loss: true
+# clip
+# WARNING: the RM raw score is measured at magnitude 16~25 (per-category means); if reward_clip kept the historical 10 it would
+#   flatly clip all scores to 10, zero out in-group variance, and break GRPO outright. Setting it to 60 here is effectively no clipping.
+reward_clip: 60
+# normalize
+reward_norm: null
+reward_shift: false
+reward_scale: false
+
+# reward
+add_token_level_kl: false
+
+# [defaults] in the normal submission path spod_grpo.sh assembles the uri and overrides these via the entry's --pretrain/--reward_pretrain
+pretrain: ./output_spod_sft/sft_hf
+reward_pretrain: ./output_spod_rm/rm_hf
+
+actor_train:
+  model_args:
+    disable_gradient_checkpointing: false
+    dtype: bf16
+    model_type: ~
+  training_args:
+    learning_rate: 1.0e-6
+    weight_decay: 0
+    per_device_train_batch_size: 1
+    gradient_accumulation_steps: 64     # 2 GPUs x 1 x 64 = 128 = rollout_batch_size x k
+    warmup_steps: 5
+    num_train_epochs: 50
+  data_args:
+    template: spod_raw
+    file_name:
+      # time-split hold-out (generated by data_pipeline/build_all.py, per-change states, a pure time split by date):
+      #   train = changes before the last 32 weeks (1414 items); test = changes in the last 32 weeks (177 items, grpo_prompts_test.jsonl) reserved for evaluation.
+      #   train and test have zero pid / date intersection, longest ~300 tok < 512.
+      - data/grpo_prompts_train.jsonl
+    domain_interleave_probs:
+      spod: 1.0
+    messages: messages
+    interleave_probs: "1.0"
+    preprocessing_num_workers: 8
+  strategy_args:
+    strategy_name: megatron_train
+    strategy_config:
+      tensor_model_parallel_size: 1
+      pipeline_model_parallel_size: 1
+      expert_model_parallel_size: 1
+      use_distributed_optimizer: true
+      recompute_granularity: full
+  device_mapping: list(range(0,2))
+  infer_batch_size: 2
+
+actor_infer:
+  model_args:
+    disable_gradient_checkpointing: true
+    dtype: bf16
+  generating_args:
+    max_new_tokens: ${response_length}
+    top_p: 0.99
+    top_k: 100
+    num_beams: 1
+    temperature: 0.99
+    num_return_sequences: ${num_return_sequences_in_group}
+  data_args:
+    template: spod_raw
+  strategy_args:
+    strategy_name: vllm
+    strategy_config:
+      gpu_memory_utilization: 0.8
+      block_size: 16
+      max_model_len: 1536
+  device_mapping: list(range(0,2))
+  infer_batch_size: 1
+
+reference:
+  model_args:
+    disable_gradient_checkpointing: true
+    dtype: bf16
+    model_type: ~
+  data_args:
+    template: spod_raw
+  strategy_args:
+    strategy_name: megatron_infer
+    strategy_config:
+      tensor_model_parallel_size: 1
+      pipeline_model_parallel_size: 1
+      expert_model_parallel_size: 1
+  device_mapping: list(range(0,2))
+  infer_batch_size: 2
+
+rewards:
+  spod:
+    # discriminative RM scoring: TokenClassification(num_labels=1), the last-position logit is the response score.
+    # SPOD's injection point is inside this worker (it needs the pre-whitening raw scores + the full k items of the same group).
+    worker_cls: roll.pipeline.rlvr.rewards.spod_rm_reward_worker.SpodRMRewardWorker
+    model_args:
+      model_name_or_path: ${reward_pretrain}
+      model_type: auto_token_classification
+      num_labels: 1
+      dtype: bf16
+      disable_gradient_checkpointing: true
+    data_args:
+      template: spod_raw
+    strategy_args:
+      strategy_name: hf_infer
+    tag_included: [spod]
+    device_mapping: list(range(0,2))
+    infer_batch_size: 4
